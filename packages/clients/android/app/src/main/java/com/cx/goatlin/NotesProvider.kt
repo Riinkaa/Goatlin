@@ -7,6 +7,7 @@ import android.content.UriMatcher
 import android.database.Cursor
 import android.database.sqlite.SQLiteQueryBuilder
 import android.net.Uri
+import android.provider.BaseColumns
 import com.cx.goatlin.helpers.DatabaseHelper
 
 class NotesProvider : ContentProvider() {
@@ -24,7 +25,8 @@ class NotesProvider : ContentProvider() {
     }
 
     override fun onCreate(): Boolean {
-        this.database = DatabaseHelper(context)
+        val ctx = context ?: return false
+        this.database = DatabaseHelper(ctx)
         return true
     }
 
@@ -35,11 +37,13 @@ class NotesProvider : ContentProvider() {
         selectionArgs: Array<String>?,
         sortOrder: String?
     ): Cursor? {
-        val queryBuilder = SQLiteQueryBuilder()
-        queryBuilder.tables = NOTES_TABLE
-        queryBuilder.setStrict(true)
+        val queryBuilder = SQLiteQueryBuilder().apply {
+            tables = NOTES_TABLE
+            setStrict(true)
+            setProjectionMap(PROJECTION_MAP)
+        }
 
-        val safeProjection = sanitizeProjection(projection)
+        val safeProjection = resolveSafeProjection(projection)
         val cleanSelection = sanitizeSelection(selection)
         val safeSortOrder = sanitizeSortOrder(sortOrder)
 
@@ -105,12 +109,14 @@ class NotesProvider : ContentProvider() {
         TODO("Implement this to handle requests to update one or more rows.")
     }
 
-    private fun sanitizeProjection(projection: Array<String>?): Array<String>? {
+    // Mengembalikan nilai string konstanta dari whitelist, bukan elemen array input langsung
+    private fun resolveSafeProjection(projection: Array<String>?): Array<String>? {
         if (projection == null) return null
-        return projection.map { column ->
-            ALLOWED_COLUMNS[column.trim().lowercase()]
-                ?: throw IllegalArgumentException("Invalid projection column: $column")
-        }.toTypedArray()
+        return Array(projection.size) { idx ->
+            val rawCol = projection[idx].trim().lowercase()
+            ALLOWED_COLUMNS[rawCol]
+                ?: throw IllegalArgumentException("Invalid projection column: ${projection[idx]}")
+        }
     }
 
     private fun sanitizeSelection(selection: String?): String? {
@@ -161,13 +167,13 @@ class NotesProvider : ContentProvider() {
 
         private val ALLOWED_COLUMNS = mapOf(
             "rowid" to "rowid",
-            "_id" to "_id",
+            "_id" to BaseColumns._ID,
             "id" to "id",
             "title" to "Title",
-            "content" to "Content",
-            "username" to "Username",
-            "owner" to "Owner"
+            "content" to "Content"
         )
+
+        private val PROJECTION_MAP: Map<String, String> = ALLOWED_COLUMNS.mapValues { (_, col) -> col }
 
         private val ALLOWED_OPERATORS = mapOf(
             "=" to "=",

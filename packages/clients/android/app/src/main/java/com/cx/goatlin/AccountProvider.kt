@@ -24,7 +24,8 @@ class AccountProvider : ContentProvider() {
     }
 
     override fun onCreate(): Boolean {
-        this.database = DatabaseHelper(context)
+        val ctx = context ?: return false
+        this.database = DatabaseHelper(ctx)
         return true
     }
 
@@ -40,12 +41,13 @@ class AccountProvider : ContentProvider() {
         queryBuilder.setStrict(true)
         queryBuilder.setProjectionMap(PROJECTION_MAP)
 
-        val safeProjection = sanitizeProjection(projection)
+        val safeProjection = resolveSafeProjection(projection)
         val cleanSelection = sanitizeSelection(selection)
+        val cleanSelectionArgs = sanitizeSelectionArgs(selectionArgs)
         val safeSortOrder = sanitizeSortOrder(sortOrder)
 
-        var safeSelection = cleanSelection
-        var safeSelectionArgs = selectionArgs
+        var safeSelection: String? = cleanSelection
+        var safeSelectionArgs: Array<String>? = cleanSelectionArgs
 
         when (sURIMatcher.match(uri)) {
             ACCOUNTS_ID -> {
@@ -56,7 +58,10 @@ class AccountProvider : ContentProvider() {
                 } else {
                     "($cleanSelection) AND $idCondition"
                 }
-                safeSelectionArgs = (selectionArgs ?: emptyArray()) + accountId.toString()
+                val baseArgs = cleanSelectionArgs ?: emptyArray()
+                safeSelectionArgs = Array(baseArgs.size + 1) { idx ->
+                    if (idx < baseArgs.size) baseArgs[idx] else accountId.toString()
+                }
             }
             ACCOUNTS -> {
                 // No ID filter needed
@@ -106,12 +111,29 @@ class AccountProvider : ContentProvider() {
         throw UnsupportedOperationException("Not yet implemented")
     }
 
-    private fun sanitizeProjection(projection: Array<String>?): Array<String>? {
+    private fun resolveSafeProjection(projection: Array<String>?): Array<String>? {
         if (projection == null) return null
-        return projection.map { column ->
-            ALLOWED_COLUMNS[column.trim().lowercase()]
-                ?: throw IllegalArgumentException("Invalid projection column: $column")
-        }.toTypedArray()
+        return Array(projection.size) { idx ->
+            val key = projection[idx].trim().lowercase()
+            when (key) {
+                "rowid" -> "rowid"
+                "_id" -> "_id"
+                "username" -> "Username"
+                "password" -> "Password"
+                else -> throw IllegalArgumentException("Invalid projection column: ${projection[idx]}")
+            }
+        }
+    }
+
+    private fun sanitizeSelectionArgs(selectionArgs: Array<String>?): Array<String>? {
+        if (selectionArgs == null) return null
+        return Array(selectionArgs.size) { idx ->
+            val arg = selectionArgs[idx]
+            if (arg.length > 256) {
+                throw IllegalArgumentException("Selection argument too long")
+            }
+            String(arg.toCharArray())
+        }
     }
 
     private fun sanitizeSelection(selection: String?): String? {

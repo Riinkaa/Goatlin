@@ -99,11 +99,8 @@ router.put('/accounts/:username/notes/:note', auth, async (req, res) => {
     }
 
     const cleanNoteBody = sanitizeNoteBody(req.body);
-    const updatePayload = {
-        ...cleanNoteBody,
-        id: noteId,
-        owner: username
-    };
+        return res.status(500).json({ error: 'Failed to create/update note' });
+    }<([{newLine}]>});<([{newLine}]><([{newLine}]>router.get('/accounts/:username/notes', auth, async (req, res, next) => {
 
     try {
         await Note.findOneAndUpdate(
