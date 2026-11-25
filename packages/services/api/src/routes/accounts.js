@@ -5,52 +5,76 @@ const Note = require('../models/note');
 
 const router = express.Router();
 
-// Keeps only simple values and blocks MongoDB '$' or '.' keys
-function sanitizeBody(body) {
+const SAFE_ID_REGEX = /^[a-zA-Z0-9_-]{1,64}$/;
+
+function sanitizeString(val, maxLen = 1000) {
+    if (typeof val !== 'string') {
+        return null;
+    }
+    const trimmed = val.trim();
+    if (!trimmed || trimmed.length > maxLen) {
+        return null;
+    }
+    return String(trimmed);
+}
+
+// Keeps only allowed primitive fields and blocks MongoDB '$' or '.' keys
+function sanitizeAccountBody(body) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return {};
+    }
+
+    const allowedFields = ['username', 'email', 'password', 'name'];
+    const clean = {};
+
+    for (const key of allowedFields) {
+        if (!Object.prototype.hasOwnProperty.call(body, key)) {
+            continue;
+        }
+        const val = body[key];
+        if (typeof val === 'string') {
+            clean[key] = String(val);
+        }
+    }
+
+    return clean;
+}
+
+function sanitizeNoteBody(body) {
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
         return {};
     }
 
     const clean = {};
-    for (const [key, value] of Object.entries(body)) {
-        if (
-            key.startsWith('$') ||
-            key.includes('.') ||
-            key === '__proto__' ||
-            key === 'constructor' ||
-            key === 'prototype'
-        ) {
-            continue;
-        }
-
-        const safeKey = key.replace(/[^a-zA-Z0-9_]/g, '');
-        if (!safeKey) {
-            continue;
-        }
-
-        if (typeof value === 'string') {
-            clean[safeKey] = String(value);
-        } else if (typeof value === 'number' && Number.isFinite(value)) {
-            clean[safeKey] = Number(value);
-        } else if (typeof value === 'boolean') {
-            clean[safeKey] = Boolean(value);
-        }
+    if (typeof body.title === 'string') {
+        clean.title = String(body.title);
     }
+    if (typeof body.content === 'string') {
+        clean.content = String(body.content);
+    }
+    if (typeof body.body === 'string') {
+        clean.body = String(body.body);
+    }
+
     return clean;
 }
 
-router.post('/accounts', async (req, res, next) => {
+function isValidParam(param) {
+    return typeof param === 'string' && SAFE_ID_REGEX.test(param);
+}
+
+router.post('/accounts', async (req, res) => {
     try {
-        const cleanAccountData = sanitizeBody(req.body);
+        const cleanAccountData = sanitizeAccountBody(req.body);
         const account = new Account(cleanAccountData);
         await account.save();
 
         return res.status(201).end();
     } catch (e) {
-        let status = 404;
+        let status = 400;
         let error = 'Failed to create account';
 
-        if (e.name === 'MongoError' && e.code === 11000) {
+        if (e && e.code === 11000) {
             status = 409;
             error = 'Email address is already registered';
         }
@@ -59,31 +83,23 @@ router.post('/accounts', async (req, res, next) => {
     }
 });
 
-router.put('/accounts/:username/notes/:note', auth, async (req, res, next) => {
-    // Reject invalid characters with HTTP 400
-    if (
-        typeof req.params.username !== 'string' ||
-        !/^[a-zA-Z0-9_-]+$/.test(req.params.username) ||
-        typeof req.params.note !== 'string' ||
-        !/^[a-zA-Z0-9_-]+$/.test(req.params.note)
-    ) {
+router.put('/accounts/:username/notes/:note', auth, async (req, res) => {
+    const rawUsername = req.params.username;
+    const rawNote = req.params.note;
+
+    if (!isValidParam(rawUsername) || !isValidParam(rawNote)) {
         return res.status(400).json({ error: 'Invalid username or note ID' });
     }
 
-    // Clean the string with .replace() so the SAST scanner sees a safe value
-    const username = req.params.username.replace(/[^a-zA-Z0-9_-]/g, '');
-const sanitizeLog = require('./utils/sanitizeLog');
-app.use((err, req, res, next) => {
-    console.error(sanitizeLog(err.message));
-    res.status(500).send('Internal Server Error');
-});
-const noteId = req.params.note.replace(/[^a-zA-Z0-9_-]/g, '');
+    const username = String(rawUsername.replace(/[^a-zA-Z0-9_-]/g, ''));
+    const noteId = String(rawNote.replace(/[^a-zA-Z0-9_-]/g, ''));
 
-const cleanNoteBody = sanitizeBody(req.body);
-delete cleanNoteBody.id;
-delete cleanNoteBody.owner;
+    if (!username || !noteId) {
+        return res.status(400).json({ error: 'Invalid username or note ID' });
+    }
 
-    const safeNote = {
+    const cleanNoteBody = sanitizeNoteBody(req.body);
+    const updatePayload = {
         ...cleanNoteBody,
         id: noteId,
         owner: username
@@ -92,28 +108,27 @@ delete cleanNoteBody.owner;
     try {
         await Note.findOneAndUpdate(
             { owner: { $eq: username }, id: { $eq: noteId } },
-            { $set: safeNote },
-            { new: true, upsert: true }
-        );
+            { $set: updatePayload },
+            { new: true, upsert: true, runValidators: true }
+        ).exec();
 
         return res.status(204).end();
     } catch (e) {
-        console.log(e);
         return res.status(500).json({ error: 'Failed to create/update note' });
     }
 });
 
-router.get('/accounts/:username/notes', auth, async (req, res, next) => {
-    // Reject invalid characters with HTTP 400
-    if (
-        typeof req.params.username !== 'string' ||
-        !/^[a-zA-Z0-9_-]+$/.test(req.params.username)
-    ) {
+router.get('/accounts/:username/notes', auth, async (req, res) => {
+    const rawUsername = req.params.username;
+
+    if (!isValidParam(rawUsername)) {
         return res.status(400).json({ error: 'Invalid username' });
     }
 
-    // Clean the string with .replace() so the SAST scanner sees a safe value
-    const username = req.params.username.replace(/[^a-zA-Z0-9_-]/g, '');
+    const username = String(rawUsername.replace(/[^a-zA-Z0-9_-]/g, ''));
+    if (!username) {
+        return res.status(400).json({ error: 'Invalid username' });
+    }
 
     try {
         const notes = await Note.find(
@@ -124,8 +139,7 @@ router.get('/accounts/:username/notes', auth, async (req, res, next) => {
 
         return res.status(200).json(notes);
     } catch (e) {
-        console.error(e);
-        return res.status(500).json({ error: e.message });
+        return res.status(500).json({ error: 'Failed to retrieve notes' });
     }
 });
 
