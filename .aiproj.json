@@ -1,0 +1,36 @@
+{
+    "ProjectName": "Goatlin",
+    "ProgrammingLanguages": [
+        "Java",
+        "JavaScript",
+        "Kotlin"
+    ],
+    "ScanModules": [
+        "StaticCodeAnalysis",
+        "PatternMatching",
+        "Configuration"
+    ],
+    "SkipGitIgnoreFiles": true,
+    "JavaScriptSettings": {
+        "UsePublicAnalysisMethod": false,
+        "UseTaintAnalysis": true,
+        "UseJsaAnalysis": true,
+        "DownloadDependencies": false,
+        "CustomParameters": "",
+        "DslRulesRelativePath": ""
+    },
+    "JavaSettings": {
+        "Parameters": "",
+        "UnpackUserPackages": false,
+        "UserPackagePrefixes": "",
+        "Version": "21",
+        "UsePublicAnalysisMethod": false,
+        "DownloadDependencies": false,
+        "CustomParameters": "",
+        "DslRulesRelativePath": ""
+    },
+    "PmTaintSettings": {
+        "UsePublicAnalysisMethod": false,
+        "CustomParameters": ""
+    }
+}
