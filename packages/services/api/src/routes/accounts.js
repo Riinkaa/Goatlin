@@ -5,12 +5,18 @@ const Note = require('../models/note');
 
 const router = express.Router();
 
-// Checks that URL values are plain strings with safe characters only
+// Strips disallowed characters and confirms the URL parameter is a safe plain string
 function getSafeParam(value) {
-    if (typeof value !== 'string' || !/^[a-zA-Z0-9@._-]+$/.test(value)) {
+    if (typeof value !== 'string') {
         return null;
     }
-    return value;
+
+    const sanitized = value.replace(/[^a-zA-Z0-9@._-]/g, '');
+    if (!sanitized || sanitized !== value) {
+        return null;
+    }
+
+    return sanitized;
 }
 
 // Keeps only plain values and blocks MongoDB '$' operators or nested objects
@@ -21,7 +27,13 @@ function sanitizeBody(body) {
 
     const clean = {};
     for (const [key, value] of Object.entries(body)) {
-        if (key.startsWith('$') || key.includes('.')) {
+        if (
+            key.startsWith('$') ||
+            key.includes('.') ||
+            key === '__proto__' ||
+            key === 'constructor' ||
+            key === 'prototype'
+        ) {
             continue;
         }
         if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
@@ -37,7 +49,7 @@ router.post('/accounts', async (req, res, next) => {
         const account = new Account(cleanAccountData);
         await account.save();
 
-        res.status(201);
+        return res.status(201).end();
     } catch (e) {
         let status = 404;
         let error = 'Failed to create account';
@@ -47,9 +59,7 @@ router.post('/accounts', async (req, res, next) => {
             error = 'Email address is already registered';
         }
 
-        res.status(status).json({ error });
-    } finally {
-        res.end();
+        return res.status(status).json({ error });
     }
 });
 
@@ -72,22 +82,16 @@ router.put('/accounts/:username/notes/:note', auth, async (req, res, next) => {
     };
 
     try {
-        const note = await Note.findOneAndUpdate(
-            { owner: username, id: noteId },
+        await Note.findOneAndUpdate(
+            { owner: { $eq: String(username) }, id: { $eq: String(noteId) } },
             { $set: safeNote },
             { new: true, upsert: true }
         );
 
-        res.status(204);
+        return res.status(204).end();
     } catch (e) {
-        let status = 500;
-        let error = 'Failed to create/update note';
-
         console.log(e);
-
-        res.status(status).json({ error });
-    } finally {
-        res.end();
+        return res.status(500).json({ error: 'Failed to create/update note' });
     }
 });
 
@@ -100,21 +104,15 @@ router.get('/accounts/:username/notes', auth, async (req, res, next) => {
 
     try {
         const notes = await Note.find(
-            { owner: username },
+            { owner: { $eq: String(username) } },
             null,
             { lean: true }
         ).exec();
 
-        res.status(200).json(notes).end();
+        return res.status(200).json(notes);
     } catch (e) {
-        let status = 500;
-        let error = e.message;
-
         console.error(e);
-
-        res.status(status).json({ error });
-    } finally {
-        res.end();
+        return res.status(500).json({ error: e.message });
     }
 });
 
