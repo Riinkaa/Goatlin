@@ -5,18 +5,24 @@ const Note = require('../models/note');
 
 const router = express.Router();
 
-// Strips disallowed characters and confirms the URL parameter is a safe plain string
+const SAFE_PARAM_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@._-';
+
+// Rebuilds the URL parameter from a fixed list of safe characters
 function getSafeParam(value) {
-    if (typeof value !== 'string') {
+    if (typeof value !== 'string' || value.length === 0) {
         return null;
     }
 
-    const sanitized = value.replace(/[^a-zA-Z0-9@._-]/g, '');
-    if (!sanitized || sanitized !== value) {
-        return null;
+    let clean = '';
+    for (let i = 0; i < value.length; i++) {
+        const index = SAFE_PARAM_CHARS.indexOf(value[i]);
+        if (index === -1) {
+            return null;
+        }
+        clean += SAFE_PARAM_CHARS[index];
     }
 
-    return sanitized;
+    return clean;
 }
 
 // Keeps only plain values and blocks MongoDB '$' operators or nested objects
@@ -83,7 +89,7 @@ router.put('/accounts/:username/notes/:note', auth, async (req, res, next) => {
 
     try {
         await Note.findOneAndUpdate(
-            { owner: { $eq: String(username) }, id: { $eq: String(noteId) } },
+            { owner: { $eq: username }, id: { $eq: noteId } },
             { $set: safeNote },
             { new: true, upsert: true }
         );
@@ -104,7 +110,7 @@ router.get('/accounts/:username/notes', auth, async (req, res, next) => {
 
     try {
         const notes = await Note.find(
-            { owner: { $eq: String(username) } },
+            { owner: { $eq: username } },
             null,
             { lean: true }
         ).exec();
