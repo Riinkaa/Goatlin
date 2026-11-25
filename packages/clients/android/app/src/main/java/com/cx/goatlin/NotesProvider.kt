@@ -37,25 +37,24 @@ class NotesProvider : ContentProvider() {
     ): Cursor? {
         val queryBuilder = SQLiteQueryBuilder()
         queryBuilder.tables = NOTES_TABLE
-        // Blocks unsafe SQL tricks in projection, selection, and sortOrder
         queryBuilder.setStrict(true)
 
-        var safeSelection = selection
+        val safeProjection = sanitizeProjection(projection)
+        val cleanSelection = sanitizeSelection(selection)
+        val safeSortOrder = sanitizeSortOrder(sortOrder)
+
+        var safeSelection = cleanSelection
         var safeSelectionArgs = selectionArgs
 
         when (sURIMatcher.match(uri)) {
             NOTES_ID -> {
-                // Makes sure the last part of the URI is a valid number
                 val noteId = ContentUris.parseId(uri)
-
-                // Uses '?' instead of joining raw text into the SQL query
                 val idCondition = "$COLUMN_ID = ?"
-                safeSelection = if (selection.isNullOrBlank()) {
+                safeSelection = if (cleanSelection == null) {
                     idCondition
                 } else {
-                    "($selection) AND $idCondition"
+                    "($cleanSelection) AND $idCondition"
                 }
-
                 safeSelectionArgs = (selectionArgs ?: emptyArray()) + noteId.toString()
             }
             NOTES -> {
@@ -66,12 +65,12 @@ class NotesProvider : ContentProvider() {
 
         val cursor = queryBuilder.query(
             this.database.readableDatabase,
-            projection,
+            safeProjection,
             safeSelection,
             safeSelectionArgs,
             null,
             null,
-            sortOrder
+            safeSortOrder
         )
         cursor?.setNotificationUri(context?.contentResolver, uri)
         return cursor
@@ -106,11 +105,79 @@ class NotesProvider : ContentProvider() {
         TODO("Implement this to handle requests to update one or more rows.")
     }
 
+    private fun sanitizeProjection(projection: Array<String>?): Array<String>? {
+        if (projection == null) return null
+        return projection.map { column ->
+            ALLOWED_COLUMNS[column.trim().lowercase()]
+                ?: throw IllegalArgumentException("Invalid projection column: $column")
+        }.toTypedArray()
+    }
+
+    private fun sanitizeSelection(selection: String?): String? {
+        if (selection.isNullOrBlank()) return null
+        val clauseRegex = Regex(
+            """^\s*([a-zA-Z0-9_]+)\s*(=|!=|<>|<|>|<=|>=|LIKE)\s*\?\s*$""",
+            RegexOption.IGNORE_CASE
+        )
+        val clauses = selection.split(Regex("""\s+AND\s+""", RegexOption.IGNORE_CASE))
+
+        return clauses.joinToString(" AND ") { clause ->
+            val match = clauseRegex.matchEntire(clause)
+                ?: throw IllegalArgumentException("Invalid selection clause: $clause")
+            val safeCol = ALLOWED_COLUMNS[match.groupValues[1].lowercase()]
+                ?: throw IllegalArgumentException("Invalid selection column")
+            val safeOp = ALLOWED_OPERATORS[match.groupValues[2].uppercase()]
+                ?: throw IllegalArgumentException("Invalid selection operator")
+            "$safeCol $safeOp ?"
+        }
+    }
+
+    private fun sanitizeSortOrder(sortOrder: String?): String? {
+        if (sortOrder.isNullOrBlank()) return null
+        val sortRegex = Regex(
+            """^\s*([a-zA-Z0-9_]+)(?:\s+(ASC|DESC))?\s*$""",
+            RegexOption.IGNORE_CASE
+        )
+        return sortOrder.split(",").joinToString(", ") { term ->
+            val match = sortRegex.matchEntire(term)
+                ?: throw IllegalArgumentException("Invalid sortOrder term: $term")
+            val safeCol = ALLOWED_COLUMNS[match.groupValues[1].lowercase()]
+                ?: throw IllegalArgumentException("Invalid sortOrder column")
+            when (match.groupValues[2].uppercase()) {
+                "ASC" -> "$safeCol ASC"
+                "DESC" -> "$safeCol DESC"
+                "" -> safeCol
+                else -> throw IllegalArgumentException("Invalid sort direction")
+            }
+        }
+    }
+
     companion object {
         private const val AUTHORITY = "com.cx.goatlin.notes"
         private const val NOTES_TABLE = "Notes"
         private const val COLUMN_ID = "rowid"
         val CONTENT_URI: Uri = Uri.parse("content://$AUTHORITY/$NOTES_TABLE")
         private const val DATABASE_NAME = "data"
+
+        private val ALLOWED_COLUMNS = mapOf(
+            "rowid" to "rowid",
+            "_id" to "_id",
+            "id" to "id",
+            "title" to "Title",
+            "content" to "Content",
+            "username" to "Username",
+            "owner" to "Owner"
+        )
+
+        private val ALLOWED_OPERATORS = mapOf(
+            "=" to "=",
+            "!=" to "!=",
+            "<>" to "<>",
+            "<" to "<",
+            ">" to ">",
+            "<=" to "<=",
+            ">=" to ">=",
+            "LIKE" to "LIKE"
+        )
     }
 }

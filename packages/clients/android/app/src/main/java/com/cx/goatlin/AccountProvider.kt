@@ -37,25 +37,25 @@ class AccountProvider : ContentProvider() {
     ): Cursor? {
         val queryBuilder = SQLiteQueryBuilder()
         queryBuilder.tables = ACCOUNTS_TABLE
-        // Blocks unsafe SQL tricks in selection, projection, and sortOrder
         queryBuilder.setStrict(true)
+        queryBuilder.setProjectionMap(PROJECTION_MAP)
 
-        var safeSelection = selection
+        val safeProjection = sanitizeProjection(projection)
+        val cleanSelection = sanitizeSelection(selection)
+        val safeSortOrder = sanitizeSortOrder(sortOrder)
+
+        var safeSelection = cleanSelection
         var safeSelectionArgs = selectionArgs
 
         when (sURIMatcher.match(uri)) {
             ACCOUNTS_ID -> {
-                // Make sure the last part of the URI is a valid number
                 val accountId = ContentUris.parseId(uri)
-
-                // Use '?' placeholder instead of joining strings
                 val idCondition = "$COLUMN_ID = ?"
-                safeSelection = if (selection.isNullOrBlank()) {
+                safeSelection = if (cleanSelection == null) {
                     idCondition
                 } else {
-                    "($selection) AND $idCondition"
+                    "($cleanSelection) AND $idCondition"
                 }
-
                 safeSelectionArgs = (selectionArgs ?: emptyArray()) + accountId.toString()
             }
             ACCOUNTS -> {
@@ -66,12 +66,12 @@ class AccountProvider : ContentProvider() {
 
         val cursor = queryBuilder.query(
             this.database.readableDatabase,
-            projection,
+            safeProjection,
             safeSelection,
             safeSelectionArgs,
             null,
             null,
-            sortOrder
+            safeSortOrder
         )
         cursor?.setNotificationUri(context?.contentResolver, uri)
         return cursor
@@ -106,12 +106,83 @@ class AccountProvider : ContentProvider() {
         throw UnsupportedOperationException("Not yet implemented")
     }
 
+    private fun sanitizeProjection(projection: Array<String>?): Array<String>? {
+        if (projection == null) return null
+        return projection.map { column ->
+            ALLOWED_COLUMNS[column.trim().lowercase()]
+                ?: throw IllegalArgumentException("Invalid projection column: $column")
+        }.toTypedArray()
+    }
+
+    private fun sanitizeSelection(selection: String?): String? {
+        if (selection.isNullOrBlank()) return null
+        val clauseRegex = Regex(
+            """^\s*([a-zA-Z0-9_]+)\s*(=|!=|<>|<|>|<=|>=|LIKE)\s*\?\s*$""",
+            RegexOption.IGNORE_CASE
+        )
+        val clauses = selection.split(Regex("""\s+AND\s+""", RegexOption.IGNORE_CASE))
+
+        return clauses.joinToString(" AND ") { clause ->
+            val match = clauseRegex.matchEntire(clause)
+                ?: throw IllegalArgumentException("Invalid selection clause: $clause")
+            val safeCol = ALLOWED_COLUMNS[match.groupValues[1].lowercase()]
+                ?: throw IllegalArgumentException("Invalid selection column")
+            val safeOp = ALLOWED_OPERATORS[match.groupValues[2].uppercase()]
+                ?: throw IllegalArgumentException("Invalid selection operator")
+            "$safeCol $safeOp ?"
+        }
+    }
+
+    private fun sanitizeSortOrder(sortOrder: String?): String? {
+        if (sortOrder.isNullOrBlank()) return null
+        val sortRegex = Regex(
+            """^\s*([a-zA-Z0-9_]+)(?:\s+(ASC|DESC))?\s*$""",
+            RegexOption.IGNORE_CASE
+        )
+        return sortOrder.split(",").joinToString(", ") { term ->
+            val match = sortRegex.matchEntire(term)
+                ?: throw IllegalArgumentException("Invalid sortOrder term: $term")
+            val safeCol = ALLOWED_COLUMNS[match.groupValues[1].lowercase()]
+                ?: throw IllegalArgumentException("Invalid sortOrder column")
+            when (match.groupValues[2].uppercase()) {
+                "ASC" -> "$safeCol ASC"
+                "DESC" -> "$safeCol DESC"
+                "" -> safeCol
+                else -> throw IllegalArgumentException("Invalid sort direction")
+            }
+        }
+    }
+
     companion object {
         private const val AUTHORITY = "com.cx.goatlin.accounts"
         private const val ACCOUNTS_TABLE = "Accounts"
-        // Check DatabaseHelper.kt to confirm if this column is "_id" or "id"
-        private const val COLUMN_ID = "_id"
+        private const val COLUMN_ID = "rowid"
         val CONTENT_URI: Uri = Uri.parse("content://$AUTHORITY/$ACCOUNTS_TABLE")
         private const val DATABASE_NAME = "data"
+
+        private val ALLOWED_COLUMNS = mapOf(
+            "rowid" to "rowid",
+            "_id" to "_id",
+            "username" to "Username",
+            "password" to "Password"
+        )
+
+        private val PROJECTION_MAP = mapOf(
+            "rowid" to "rowid",
+            "_id" to "_id",
+            "Username" to "Username",
+            "Password" to "Password"
+        )
+
+        private val ALLOWED_OPERATORS = mapOf(
+            "=" to "=",
+            "!=" to "!=",
+            "<>" to "<>",
+            "<" to "<",
+            ">" to ">",
+            "<=" to "<=",
+            ">=" to ">=",
+            "LIKE" to "LIKE"
+        )
     }
 }
