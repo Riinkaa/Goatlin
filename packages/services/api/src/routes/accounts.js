@@ -72,11 +72,16 @@ router.put('/accounts/:username/notes/:note', auth, async (req, res, next) => {
 
     // Clean the string with .replace() so the SAST scanner sees a safe value
     const username = req.params.username.replace(/[^a-zA-Z0-9_-]/g, '');
-    const noteId = req.params.note.replace(/[^a-zA-Z0-9_-]/g, '');
+const sanitizeLog = require('./utils/sanitizeLog');
+app.use((err, req, res, next) => {
+    console.error(sanitizeLog(err.message));
+    res.status(500).send('Internal Server Error');
+});
+const noteId = req.params.note.replace(/[^a-zA-Z0-9_-]/g, '');
 
-    const cleanNoteBody = sanitizeBody(req.body);
-    delete cleanNoteBody.id;
-    delete cleanNoteBody.owner;
+const cleanNoteBody = sanitizeBody(req.body);
+delete cleanNoteBody.id;
+delete cleanNoteBody.owner;
 
     const safeNote = {
         ...cleanNoteBody,
